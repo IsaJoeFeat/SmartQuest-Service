@@ -2,31 +2,42 @@
 
 SmartQuest Service is a reusable, server-authoritative quest and objective system for Roblox Studio.
 
-It is built as a drop-in toolkit module you can import into multiple projects instead of rewriting quest logic every time. It is intentionally game-agnostic, so it can support RP jobs, zombie Easter egg steps, tutorials, story missions, simulator tasks, dungeon objectives, or minigame task chains.
+It is built as a drop-in toolkit service that can be imported into multiple projects instead of rewriting quest logic every time. It is intentionally game-agnostic, so it can support RP jobs, zombie Easter egg steps, tutorials, story missions, simulator tasks, dungeon objectives, daily errands, or minigame task chains.
+
+## Version
+
+`v2.0.0`
+
+This version upgrades SmartQuest from a basic objective tracker into a fuller reusable quest service.
 
 ## Core Rule
 
 **The server owns quest progress.**
 
-Clients only display objective state. Clients do not decide when objectives complete.
+Clients show trackers, journal entries, markers, and toast messages. They do not decide when objectives complete.
 
-## What It Includes
+## Feature List
 
-- Config-based quest definitions
+SmartQuest v2 includes:
+
+- Config-based quests
 - Server-authoritative quest state
-- Step-by-step objective progression
-- Count-based progress such as `0/3`, `1/3`, `2/3`
-- Quest started/completed toast messages
-- Basic client objective tracker UI
-- Optional tagged interactables using ProximityPrompts
-- Optional tagged zones for reach-area objectives
-- Clean API for other systems to call
-
-## Current Version
-
-`v1.0.0`
-
-This version is a reusable foundation. It does not try to be a giant quest framework yet. The goal is to be easy to understand, easy to import, and easy to extend.
+- Quest prerequisites
+- Tagged quest givers
+- Objective markers
+- Quest journal UI
+- Repeatable quests
+- Repeat cooldowns
+- Reward handler hook
+- Quest and step signals
+- Step conditions
+- Timed objective steps
+- Time limits that can fail quests
+- Tagged interactables
+- Tagged objective zones
+- Startup validation warnings
+- Basic client tracker UI
+- Basic toast UI
 
 ## Roblox Studio Layout
 
@@ -54,137 +65,180 @@ At runtime, the server creates:
 ReplicatedStorage
 └── SmartQuestRemotes
     ├── SmartQuestUpdate
-    └── SmartQuestToast
+    ├── SmartQuestToast
+    ├── SmartQuestJournal
+    └── SmartQuestRequestJournal
 ```
 
 ## Quick Start
 
-### 1. Add a quest
-
-Open:
-
-```txt
-ReplicatedStorage/SmartQuestService/SmartQuestConfig.lua
-```
-
-Example quest:
+### Start a quest
 
 ```lua
-SmartQuestConfig.Quests.RepairPower = {
-    Id = "RepairPower",
-    Title = "Restore the Power",
-    Description = "Find the fuse and repair the generator.",
+local SmartQuestService = require(game.ServerScriptService.SmartQuestService.SmartQuestService)
+
+SmartQuestService:StartQuest(player, "TrainingObjectives")
+```
+
+### Progress an objective
+
+```lua
+SmartQuestService:Progress(player, "TrainingObjectives", "CollectParts", 1)
+```
+
+Only the current active step can progress. If a player tries to progress a future step, SmartQuest ignores it.
+
+## Quest Definition Example
+
+```lua
+TrainingObjectives = {
+    Id = "TrainingObjectives",
+    Title = "Training",
+    Description = "A sample quest showing count progress, a timer, and rewards.",
+    Repeatable = true,
+    RepeatCooldown = 30,
     Steps = {
         {
-            Id = "FindFuse",
-            Text = "Find the missing fuse",
-            Type = "Interact",
-            Target = "FuseBox",
+            Id = "CollectParts",
+            Text = "Collect 3 parts",
+            Type = "Collect",
+            Target = "Part",
+            Required = 3,
+        },
+        {
+            Id = "HoldPosition",
+            Text = "Hold position for 10 seconds",
+            Type = "Timer",
+            Duration = 10,
+            TimeLimit = 20,
             Required = 1,
         },
         {
-            Id = "RepairGenerator",
-            Text = "Repair the generator",
+            Id = "FinishTraining",
+            Text = "Use the training console",
             Type = "Interact",
-            Target = "Generator",
+            TargetTag = "TrainingConsole",
+            Marker = true,
+            MarkerText = "Training Console",
             Required = 1,
         },
     },
     Rewards = {
         Currency = {
-            Coins = 100,
+            Coins = 25,
         },
     },
 }
 ```
 
-### 2. Start a quest from the server
+## Step Types
 
-```lua
-local SmartQuestService = require(game.ServerScriptService.SmartQuestService.SmartQuestService)
-
-SmartQuestService:StartQuest(player, "RepairPower")
-```
-
-### 3. Progress a step from the server
-
-```lua
-SmartQuestService:Progress(player, "RepairPower", "FindFuse", 1)
-```
-
-When the current step reaches its required progress, SmartQuest automatically moves to the next step. Completing the final step completes the quest.
-
-## Recommended Step Types
-
-Step types are descriptive in v1. Progress is still changed by the server with `Progress()`.
-
-| Type | Use |
+| Type | Purpose |
 |---|---|
-| `Interact` | Player uses an object, NPC, machine, door, console, etc. |
-| `Collect` | Player gathers one or more items. |
+| `Interact` | Player uses an object, NPC, machine, console, or similar object. |
+| `Collect` | Player collects one or more objects/items. |
 | `Kill` | Player defeats enemies. |
-| `ReachZone` | Player enters a specific area. |
-| `Custom` | Any game-specific objective. |
+| `ReachZone` | Player enters a quest area. |
+| `Timer` | Step completes automatically after `Duration` seconds. |
+| `Custom` | Any project-specific objective. |
 
-Example count objective:
+## Quest Prerequisites
+
+Prerequisites prevent a quest from starting until requirements are met.
 
 ```lua
-{
-    Id = "CollectParts",
-    Text = "Collect 3 machine parts",
-    Type = "Collect",
-    Target = "MachinePart",
-    Required = 3,
+Prerequisites = {
+    CompletedQuests = {"TrainingObjectives"},
+    NotCompletedQuests = {"BadEnding"},
+    Custom = {
+        HasItem = "Fuse",
+    },
 }
 ```
 
-Progress it like this:
+Built-in checks:
+
+- `CompletedQuests`
+- `ActiveQuests`
+- `NotCompletedQuests`
+
+Custom checks are registered from the server:
 
 ```lua
-SmartQuestService:Progress(player, "BuildMachine", "CollectParts", 1)
+SmartQuestService:SetPrerequisiteHandler("HasItem", function(player, itemId, quest)
+    return InventoryService:HasItem(player, itemId), "You need " .. itemId
+end)
 ```
+
+## Step Conditions
+
+Conditions block a specific step from progressing until requirements are met.
+
+```lua
+Conditions = {
+    CompletedQuests = {"TrainingObjectives"},
+    Custom = {
+        HasItem = "Fuse",
+    },
+}
+```
+
+Register custom condition handlers:
+
+```lua
+SmartQuestService:SetConditionHandler("HasItem", function(player, itemId, quest, step)
+    return InventoryService:HasItem(player, itemId), "You need " .. itemId
+end)
+```
+
+## Tagged Quest Givers
+
+Tag an NPC, part, or model with:
+
+```txt
+SmartQuestGiver
+```
+
+Attributes:
+
+```txt
+QuestId: string = RepairPower
+PromptText: string = Start Quest
+ObjectText: string = Quest
+HoldDuration: number = 0
+MaxActivationDistance: number = 10
+```
+
+SmartQuest creates a ProximityPrompt and calls `StartQuest()` when triggered.
 
 ## Tagged Interactables
 
-SmartQuest can automatically create a ProximityPrompt for tagged objects.
-
-1. Insert a `Part` or `Model`.
-2. Add the CollectionService tag:
+Tag an object with:
 
 ```txt
 SmartQuestInteract
 ```
 
-3. Add attributes:
+Attributes:
 
 ```txt
 QuestId: string = RepairPower
 StepId: string = FindFuse
 PromptText: string = Pick up Fuse
-HoldDuration: number = 0.25
-MaxActivationDistance: number = 10
 Amount: number = 1
 ```
 
-When the player triggers the prompt, SmartQuest calls:
-
-```lua
-SmartQuestService:Progress(player, "RepairPower", "FindFuse", 1)
-```
+SmartQuest creates a prompt and calls `Progress()` when triggered.
 
 ## Tagged Zones
 
-SmartQuest can progress objectives when a player touches a tagged zone part.
-
-1. Insert a `Part`.
-2. Make it transparent and non-collidable if desired.
-3. Add the CollectionService tag:
+Tag a BasePart with:
 
 ```txt
 SmartQuestZone
 ```
 
-4. Add attributes:
+Attributes:
 
 ```txt
 QuestId: string = RepairPower
@@ -192,167 +246,239 @@ StepId: string = ReturnToMainRoom
 Amount: number = 1
 ```
 
+Touching the zone progresses the active step.
+
+## Objective Markers
+
+Quest steps can show a world-space marker.
+
+```lua
+{
+    Id = "RepairGenerator",
+    Text = "Repair the generator",
+    Type = "Interact",
+    TargetTag = "Generator",
+    Marker = true,
+    MarkerText = "Generator",
+    Required = 1,
+}
+```
+
+Target lookup order:
+
+1. `TargetTag`
+2. `TargetName`
+3. `Target`
+
+The client creates a BillboardGui marker over the resolved object.
+
+## Quest Journal
+
+The client includes a basic quest journal. By default, press `J`.
+
+Change the key in `SmartQuestConfig.Settings`:
+
+```lua
+JournalKeyCodeName = "J"
+```
+
+The journal shows:
+
+- Quest title
+- Status
+- Description
+- Current active objective
+- Progress count
+- Availability state
+
+## Repeatable Quests
+
+```lua
+Repeatable = true,
+RepeatCooldown = 300,
+```
+
+A completed repeatable quest can be started again after the cooldown ends.
+
+## Rewards
+
+SmartQuest stores reward data but does not hardcode a money, item, badge, or XP system. Connect your own project systems with one hook:
+
+```lua
+SmartQuestService:SetRewardHandler(function(player, rewards, quest, state)
+    if rewards.Currency and rewards.Currency.Coins then
+        CurrencyService:Add(player, "Coins", rewards.Currency.Coins)
+    end
+end)
+```
+
+SmartQuest also fires `RewardGranted` after the reward handler runs successfully.
+
+## Signals
+
+SmartQuest exposes signals for integration with other systems:
+
+```lua
+SmartQuestService.QuestStarted
+SmartQuestService.QuestCompleted
+SmartQuestService.QuestFailed
+SmartQuestService.QuestAbandoned
+SmartQuestService.StepStarted
+SmartQuestService.StepProgressed
+SmartQuestService.StepCompleted
+SmartQuestService.RewardGranted
+```
+
+Example:
+
+```lua
+SmartQuestService.QuestCompleted:Connect(function(player, questId, quest, rewards)
+    print(player.Name .. " completed " .. questId)
+end)
+```
+
+## Timed Objectives
+
+A timer step completes itself after `Duration` seconds:
+
+```lua
+{
+    Id = "HoldPosition",
+    Text = "Hold position for 10 seconds",
+    Type = "Timer",
+    Duration = 10,
+    Required = 1,
+}
+```
+
+Any step can also have a `TimeLimit`:
+
+```lua
+{
+    Id = "RepairGenerator",
+    Text = "Repair the generator before time runs out",
+    Type = "Interact",
+    TimeLimit = 120,
+    FailQuestOnTimeout = true,
+}
+```
+
+The client tracker displays remaining time.
+
+## Startup Validation
+
+SmartQuest warns about common setup issues:
+
+- Duplicate step IDs
+- Marker steps with no target field
+- Tagged objects missing `QuestId`
+- Interact/zone objects missing `StepId`
+- Tagged zone object not being a BasePart
+
+Validation can be disabled in config:
+
+```lua
+EnableStartupValidation = false
+```
+
 ## Public API
 
 ### `SmartQuestService:Init()`
 
-Boots the system, registers quests from config, creates remotes, and binds tagged objects.
+Boots the system.
 
-### `SmartQuestService:RegisterQuest(questDefinition)`
+### `SmartQuestService:RegisterQuest(quest)`
 
-Registers one quest manually.
-
-```lua
-SmartQuestService:RegisterQuest({
-    Id = "ExampleQuest",
-    Title = "Example Quest",
-    Steps = {
-        { Id = "Step1", Text = "Do the thing", Required = 1 },
-    },
-})
-```
+Registers one quest.
 
 ### `SmartQuestService:RegisterQuests(quests)`
 
-Registers multiple quests from a config table.
+Registers multiple quests.
 
 ### `SmartQuestService:StartQuest(player, questId)`
 
-Starts a quest for a player. Returns `true` if the quest started or was already active.
+Starts a quest if available.
 
 ### `SmartQuestService:Progress(player, questId, stepId, amount?)`
 
 Progresses the active step.
 
-Important behavior:
-
-- If the quest is not started, SmartQuest starts it automatically.
-- Only the current active step can progress.
-- Completed steps advance to the next step.
-- Completing the final step completes the quest.
-
 ### `SmartQuestService:CompleteQuest(player, questId)`
 
 Force-completes an active quest.
 
-### `SmartQuestService:FailQuest(player, questId)`
+### `SmartQuestService:FailQuest(player, questId, reason?)`
 
 Fails an active quest.
 
-### `SmartQuestService:GetQuestState(player, questId)`
+### `SmartQuestService:AbandonQuest(player, questId)`
 
-Returns the player's runtime state for one quest.
+Marks an active quest abandoned.
 
-### `SmartQuestService:GetAllStates(player)`
+### `SmartQuestService:ResetQuest(player, questId)`
 
-Returns all tracked quest states for the player.
+Clears one quest state.
 
 ### `SmartQuestService:ResetPlayer(player)`
 
-Clears all quest state for a player. Useful for testing, round resets, or fresh sessions.
+Clears all quest state for the player.
 
-## Quest Definition Format
+### `SmartQuestService:GetQuestState(player, questId)`
 
-```lua
-{
-    Id = "QuestId",
-    Title = "Quest Title",
-    Description = "Optional description.",
-    AutoStart = false,
-    Steps = {
-        {
-            Id = "StepId",
-            Text = "Objective text shown to player",
-            Type = "Interact",
-            Target = "OptionalTargetId",
-            Required = 1,
-            Optional = false,
-        },
-    },
-    Rewards = {
-        -- Optional. SmartQuest does not spend/give rewards by itself in v1.
-    },
-}
-```
+Returns one quest state.
 
-## Reward Hook
+### `SmartQuestService:GetAllStates(player)`
 
-SmartQuest stores the `Rewards` table but does not directly give currency/items yet. That is intentional because every project may use a different reward system.
+Returns all quest states for one player.
 
-Inside `CompleteQuest()`, there is a clear future hook:
+### `SmartQuestService:GetJournalSnapshot(player)`
 
-```lua
--- RewardService:Give(player, quest.Rewards)
-```
+Returns all quest data needed by the journal UI.
 
-Connect this once to your project's `CurrencyService`, `InventoryService`, `XPService`, `BadgeService`, `JobService`, or any other reward handler.
+### `SmartQuestService:CanStartQuest(player, questId)`
 
-## Design Philosophy
+Returns whether the player can start the quest and an optional reason.
 
-1. **Server authority first.** The client never decides quest completion.
-2. **Config over one-off scripts.** Most quests should be created by editing tables, not writing new systems.
-3. **Generic objective types.** The same system should work across many game genres.
-4. **Automation where it helps.** Tags and attributes let you make interactables and zones functional quickly.
-5. **No hidden magic.** If something does not work, the tag, attributes, quest ID, and step ID should be easy to inspect.
+### `SmartQuestService:SetRewardHandler(callback)`
 
-## Current Limits
+Connects SmartQuest to your reward system.
 
-v1 does not include:
+### `SmartQuestService:SetPrerequisiteHandler(name, callback)`
 
-- DataStore persistence
-- Objective markers/arrows
-- Branching dialogue quests
-- Party/shared quest progress
-- Time-limited objectives
-- Quest prerequisites
-- Built-in rewards
-- Studio validator plugin
-- Full generated quest journal UI
+Adds a custom prerequisite check.
 
-These are planned as later layers.
+### `SmartQuestService:SetConditionHandler(name, callback)`
 
-## Suggested Roadmap
-
-### v1.1
-
-- Quest prerequisites
-- Repeatable quests
-- Quest abandon/restart
-- Better tracker UI config
-- RewardService integration hook
-
-### v1.2
-
-- Objective markers
-- Quest journal UI
-- Optional DataStore adapter
-- Better typed config validation
-
-### v1.3
-
-- Dialogue hooks
-- NPC quest giver support
-- Branching steps
-- Optional step conditions
-
-### v1.4
-
-- Studio setup validator
-- Warnings for missing tags/attributes
-- Quest config linting
+Adds a custom step condition check.
 
 ## Import Checklist
 
-After importing into a Roblox project:
+- [ ] Move `src/ReplicatedStorage/SmartQuestService` into `ReplicatedStorage`
+- [ ] Move `src/ServerScriptService/SmartQuestService` into `ServerScriptService`
+- [ ] Move `src/StarterPlayer/StarterPlayerScripts/SmartQuestClient.client.lua` into `StarterPlayerScripts`
+- [ ] Press Play
+- [ ] Check output for `[SmartQuestService] v2 initialized.`
+- [ ] Test `examples/ExampleUsage.server.lua`
+- [ ] Create a tagged `SmartQuestGiver`
+- [ ] Create a tagged `SmartQuestInteract`
+- [ ] Create a tagged `SmartQuestZone`
+- [ ] Press `J` in-game to test the journal
 
-- [ ] `SmartQuestConfig.lua` is under `ReplicatedStorage/SmartQuestService`
-- [ ] `SmartQuestShared.lua` is under `ReplicatedStorage/SmartQuestService`
-- [ ] `SmartQuestService.lua` is under `ServerScriptService/SmartQuestService`
-- [ ] `SmartQuestServerMain.server.lua` is under `ServerScriptService/SmartQuestService`
-- [ ] `SmartQuestClient.client.lua` is under `StarterPlayer/StarterPlayerScripts`
-- [ ] Press Play and check output for `[SmartQuestService] SmartQuestService initialized.`
-- [ ] Test with `examples/ExampleUsage.server.lua`
+## Roadmap
+
+Possible future additions:
+
+- DataStore adapter
+- Quest save/load profile integration
+- Branching quest graphs
+- Dialogue service integration
+- Party/shared quest progress
+- Generated quest cards with icons
+- Better marker arrows at screen edge
+- Studio validator plugin
+- Rojo project file
+- Wally package support
 
 ## License
 
-Use this however you want in your own Roblox projects. Add a formal license later if this repo becomes public-facing for other developers.
+Use this in your Roblox projects. Add a formal license if you want this repo to be public-facing for other developers.
