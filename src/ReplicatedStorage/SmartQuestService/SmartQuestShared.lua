@@ -4,14 +4,18 @@
 
 local SmartQuestShared = {}
 
-SmartQuestShared.Version = "2.0.0"
+SmartQuestShared.Version = "3.0.0"
 
 SmartQuestShared.Status = {
 	NotStarted = "NotStarted",
+	Locked = "Locked",
+	Available = "Available",
 	Active = "Active",
+	ReadyToTurnIn = "ReadyToTurnIn",
 	Completed = "Completed",
 	Failed = "Failed",
 	Abandoned = "Abandoned",
+	Cooldown = "Cooldown",
 }
 
 SmartQuestShared.StepType = {
@@ -20,7 +24,19 @@ SmartQuestShared.StepType = {
 	Kill = "Kill",
 	ReachZone = "ReachZone",
 	Timer = "Timer",
+	Group = "Group",
 	Custom = "Custom",
+}
+
+SmartQuestShared.ProgressionMode = {
+	Sequential = "Sequential",
+	Parallel = "Parallel",
+}
+
+SmartQuestShared.CompletionMode = {
+	Auto = "Auto",
+	ReturnToGiver = "ReturnToGiver",
+	Manual = "Manual",
 }
 
 SmartQuestShared.RemoteFolderName = "SmartQuestRemotes"
@@ -28,58 +44,7 @@ SmartQuestShared.UpdateRemoteName = "SmartQuestUpdate"
 SmartQuestShared.ToastRemoteName = "SmartQuestToast"
 SmartQuestShared.JournalRemoteName = "SmartQuestJournal"
 SmartQuestShared.RequestJournalRemoteName = "SmartQuestRequestJournal"
-
-export type StepDefinition = {
-	Id: string,
-	Text: string,
-	Type: string?,
-	Target: string?,
-	TargetName: string?,
-	TargetTag: string?,
-	Required: number?,
-	Optional: boolean?,
-	Marker: boolean?,
-	MarkerText: string?,
-	Duration: number?,
-	TimeLimit: number?,
-	FailQuestOnTimeout: boolean?,
-	Conditions: {[string]: any}?,
-}
-
-export type QuestDefinition = {
-	Id: string,
-	Title: string,
-	Description: string?,
-	AutoStart: boolean?,
-	Repeatable: boolean?,
-	RepeatCooldown: number?,
-	Prerequisites: {[string]: any}?,
-	Steps: {StepDefinition},
-	Rewards: {[string]: any}?,
-	Metadata: {[string]: any}?,
-}
-
-export type StepState = {
-	Id: string,
-	Progress: number,
-	Required: number,
-	Completed: boolean,
-	StartedAt: number?,
-	CompletedAt: number?,
-	ExpiresAt: number?,
-}
-
-export type QuestState = {
-	Id: string,
-	Status: string,
-	CurrentStepIndex: number,
-	Steps: {[string]: StepState},
-	StartedAt: number?,
-	CompletedAt: number?,
-	FailedAt: number?,
-	RepeatAvailableAt: number?,
-	FailReason: string?,
-}
+SmartQuestShared.ActionRemoteName = "SmartQuestAction"
 
 function SmartQuestShared.NewSignal(name: string?)
 	local bindable = Instance.new("BindableEvent")
@@ -132,6 +97,34 @@ end
 
 function SmartQuestShared.GetServerNow(): number
 	return workspace:GetServerTimeNow()
+end
+
+function SmartQuestShared.CountArray(value): number
+	if type(value) ~= "table" then
+		return 0
+	end
+
+	local count = 0
+	for _ in ipairs(value) do
+		count += 1
+	end
+	return count
+end
+
+function SmartQuestShared.IsArray(value): boolean
+	if type(value) ~= "table" then
+		return false
+	end
+
+	local count = 0
+	for key in pairs(value) do
+		if type(key) ~= "number" then
+			return false
+		end
+		count += 1
+	end
+
+	return count == #value
 end
 
 return SmartQuestShared
