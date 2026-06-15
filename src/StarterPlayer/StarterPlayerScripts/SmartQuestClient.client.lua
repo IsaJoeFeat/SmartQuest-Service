@@ -1,6 +1,6 @@
 --!strict
--- SmartQuestClient v2
--- Client tracker, toast messages, objective marker, and quest journal UI.
+-- SmartQuestClient v3
+-- Tracker, toast messages, objective markers, and interactive quest journal.
 -- Server remains authoritative.
 
 local Players = game:GetService("Players")
@@ -22,6 +22,7 @@ local smartQuestUpdate = remoteFolder:WaitForChild(SmartQuestShared.UpdateRemote
 local smartQuestToast = remoteFolder:WaitForChild(SmartQuestShared.ToastRemoteName) :: RemoteEvent
 local smartQuestJournal = remoteFolder:WaitForChild(SmartQuestShared.JournalRemoteName) :: RemoteEvent
 local requestJournal = remoteFolder:WaitForChild(SmartQuestShared.RequestJournalRemoteName) :: RemoteFunction
+local smartQuestAction = remoteFolder:WaitForChild(SmartQuestShared.ActionRemoteName) :: RemoteFunction
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "SmartQuestGui"
@@ -33,7 +34,7 @@ local tracker = Instance.new("Frame")
 tracker.Name = "Tracker"
 tracker.AnchorPoint = Vector2.new(1, 0)
 tracker.Position = UDim2.fromScale(0.985, 0.14)
-tracker.Size = UDim2.fromOffset(360, 132)
+tracker.Size = UDim2.fromOffset(380, 140)
 tracker.BackgroundTransparency = 0.18
 tracker.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
 tracker.BorderSizePixel = 0
@@ -52,7 +53,6 @@ trackerPadding.PaddingRight = UDim.new(0, 14)
 trackerPadding.Parent = tracker
 
 local title = Instance.new("TextLabel")
-title.Name = "Title"
 title.BackgroundTransparency = 1
 title.Size = UDim2.new(1, 0, 0, 24)
 title.Font = Enum.Font.GothamBold
@@ -63,10 +63,9 @@ title.Text = "Quest"
 title.Parent = tracker
 
 local stepText = Instance.new("TextLabel")
-stepText.Name = "StepText"
 stepText.BackgroundTransparency = 1
 stepText.Position = UDim2.fromOffset(0, 34)
-stepText.Size = UDim2.new(1, 0, 0, 42)
+stepText.Size = UDim2.new(1, 0, 0, 48)
 stepText.Font = Enum.Font.Gotham
 stepText.TextSize = 15
 stepText.TextWrapped = true
@@ -77,9 +76,8 @@ stepText.Text = ""
 stepText.Parent = tracker
 
 local progress = Instance.new("TextLabel")
-progress.Name = "Progress"
 progress.BackgroundTransparency = 1
-progress.Position = UDim2.fromOffset(0, 82)
+progress.Position = UDim2.fromOffset(0, 86)
 progress.Size = UDim2.new(1, 0, 0, 22)
 progress.Font = Enum.Font.GothamMedium
 progress.TextSize = 14
@@ -89,9 +87,8 @@ progress.Text = ""
 progress.Parent = tracker
 
 local timerText = Instance.new("TextLabel")
-timerText.Name = "Timer"
 timerText.BackgroundTransparency = 1
-timerText.Position = UDim2.fromOffset(0, 104)
+timerText.Position = UDim2.fromOffset(0, 110)
 timerText.Size = UDim2.new(1, 0, 0, 18)
 timerText.Font = Enum.Font.GothamBold
 timerText.TextSize = 13
@@ -123,7 +120,7 @@ local journal = Instance.new("Frame")
 journal.Name = "Journal"
 journal.AnchorPoint = Vector2.new(0.5, 0.5)
 journal.Position = UDim2.fromScale(0.5, 0.5)
-journal.Size = UDim2.fromOffset(620, 460)
+journal.Size = UDim2.fromOffset(700, 500)
 journal.BackgroundColor3 = Color3.fromRGB(16, 16, 16)
 journal.BackgroundTransparency = 0.08
 journal.BorderSizePixel = 0
@@ -163,7 +160,6 @@ closeJournal.Text = "×"
 closeJournal.Parent = journal
 
 local questList = Instance.new("ScrollingFrame")
-questList.Name = "QuestList"
 questList.Position = UDim2.fromOffset(0, 42)
 questList.Size = UDim2.new(1, 0, 1, -42)
 questList.BackgroundTransparency = 1
@@ -178,163 +174,138 @@ listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = questList
 
 local currentPayload = nil
-local currentMarkerGui: BillboardGui? = nil
-local currentMarkerTarget: Instance? = nil
+local markerGuis = {}
 local activeToastTween: Tween? = nil
+
+local function invokeAction(action, questId)
+	local ok, result = pcall(function()
+		return smartQuestAction:InvokeServer(action, questId)
+	end)
+	return ok and result
+end
 
 local function getCurrentStep(quest, state)
 	if not quest or not state then return nil end
 	return quest.Steps[state.CurrentStepIndex]
 end
 
+local function getActiveStepSummary(quest, state): string
+	if not quest or not state then return "" end
+	if state.Status == "ReadyToTurnIn" then return "Ready to turn in." end
+	if state.Status ~= "Active" then return state.Status end
+	if quest.ProgressionMode == "Parallel" then
+		local lines = {}
+		for _, step in ipairs(quest.Steps) do
+			local stepState = state.Steps[step.Id]
+			if stepState and not stepState.Completed then
+				table.insert(lines, step.Required > 1 and `{step.Text} ({stepState.Progress}/{stepState.Required})` or step.Text)
+			end
+		end
+		return table.concat(lines, "\n")
+	end
+	local step = getCurrentStep(quest, state)
+	if not step then return "" end
+	local stepState = state.Steps[step.Id]
+	if stepState and stepState.Required > 1 then return `{step.Text} ({stepState.Progress}/{stepState.Required})` end
+	return step.Text
+end
+
 local function getAdornee(instance: Instance?): BasePart?
 	if not instance then return nil end
 	if instance:IsA("BasePart") then return instance end
-	if instance:IsA("Model") then
-		if instance.PrimaryPart then return instance.PrimaryPart end
-		return instance:FindFirstChildWhichIsA("BasePart", true)
-	end
+	if instance:IsA("Model") then return instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true) end
 	return nil
 end
 
-local function clearMarker()
-	if currentMarkerGui then
-		currentMarkerGui:Destroy()
-		currentMarkerGui = nil
-	end
-	currentMarkerTarget = nil
+local function clearMarkers()
+	for _, marker in pairs(markerGuis) do marker:Destroy() end
+	markerGuis = {}
 end
 
-local function setMarker(marker)
-	if not marker or not marker.Target then
-		clearMarker()
-		return
-	end
+local function setMarkers(markers)
+	clearMarkers()
+	if type(markers) ~= "table" then return end
+	for _, marker in ipairs(markers) do
+		local adornee = getAdornee(marker.Target)
+		if adornee then
+			local billboard = Instance.new("BillboardGui")
+			billboard.Name = "SmartQuestMarker"
+			billboard.Adornee = adornee
+			billboard.AlwaysOnTop = true
+			billboard.Size = UDim2.fromOffset(210, 54)
+			billboard.StudsOffset = Vector3.new(0, 4, 0)
+			billboard.Parent = gui
 
-	if currentMarkerTarget == marker.Target and currentMarkerGui then
-		local label = currentMarkerGui:FindFirstChild("Label", true)
-		if label and label:IsA("TextLabel") then
+			local label = Instance.new("TextLabel")
+			label.Name = "Label"
+			label.BackgroundTransparency = 0.18
+			label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+			label.BorderSizePixel = 0
+			label.Size = UDim2.fromScale(1, 1)
+			label.Font = Enum.Font.GothamBold
+			label.TextSize = 14
+			label.TextColor3 = Color3.fromRGB(255, 240, 180)
+			label.TextStrokeTransparency = 0.45
 			label.Text = marker.Text or "Objective"
+			label.Parent = billboard
+
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0, 8)
+			corner.Parent = label
+
+			table.insert(markerGuis, billboard)
 		end
-		return
 	end
-
-	clearMarker()
-
-	local adornee = getAdornee(marker.Target)
-	if not adornee then return end
-
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "SmartQuestMarker"
-	billboard.Adornee = adornee
-	billboard.AlwaysOnTop = true
-	billboard.Size = UDim2.fromOffset(180, 48)
-	billboard.StudsOffset = Vector3.new(0, 4, 0)
-	billboard.Parent = gui
-
-	local label = Instance.new("TextLabel")
-	label.Name = "Label"
-	label.BackgroundTransparency = 0.18
-	label.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-	label.BorderSizePixel = 0
-	label.Size = UDim2.fromScale(1, 1)
-	label.Font = Enum.Font.GothamBold
-	label.TextSize = 14
-	label.TextColor3 = Color3.fromRGB(255, 240, 180)
-	label.TextStrokeTransparency = 0.45
-	label.Text = marker.Text or "Objective"
-	label.Parent = billboard
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = label
-
-	currentMarkerGui = billboard
-	currentMarkerTarget = marker.Target
 end
 
 local function updateTracker(payload)
 	currentPayload = payload
 	local quest = payload.Quest
 	local state = payload.State
-
-	if not quest or not state or state.Status ~= "Active" then
+	if not quest or not state or payload.TrackedQuestId ~= quest.Id then
+		if payload.TrackedQuestId and quest and payload.TrackedQuestId ~= quest.Id then return end
+	end
+	if not quest or not state or (state.Status ~= "Active" and state.Status ~= "ReadyToTurnIn") then
 		tracker.Visible = false
-		clearMarker()
+		clearMarkers()
 		return
 	end
-
-	local currentStep = getCurrentStep(quest, state)
-	if not currentStep then
-		tracker.Visible = false
-		clearMarker()
-		return
-	end
-
-	local stepState = state.Steps[currentStep.Id]
-	local currentProgress = stepState and stepState.Progress or 0
-	local required = stepState and stepState.Required or currentStep.Required or 1
-
 	title.Text = quest.Title
-	stepText.Text = currentStep.Text
-	progress.Text = required > 1 and `{currentProgress}/{required}` or `Step {state.CurrentStepIndex}/{#quest.Steps}`
-
+	stepText.Text = getActiveStepSummary(quest, state)
+	progress.Text = state.Status == "ReadyToTurnIn" and "Return to the quest giver" or `Status: {state.Status}`
 	tracker.Visible = true
-	setMarker(payload.Marker)
+	setMarkers(payload.Markers)
 end
 
 local function updateTimerText()
-	if not currentPayload then
-		timerText.Text = ""
-		return
-	end
-
+	if not currentPayload then timerText.Text = "" return end
 	local quest = currentPayload.Quest
 	local state = currentPayload.State
-	if not quest or not state or state.Status ~= "Active" then
-		timerText.Text = ""
-		return
+	if not quest or not state or state.Status ~= "Active" then timerText.Text = "" return end
+	local nearest = nil
+	for _, step in ipairs(quest.Steps) do
+		local stepState = state.Steps[step.Id]
+		if stepState and not stepState.Completed and stepState.ExpiresAt then
+			local remaining = stepState.ExpiresAt - workspace:GetServerTimeNow()
+			if not nearest or remaining < nearest then nearest = remaining end
+		end
 	end
-
-	local step = getCurrentStep(quest, state)
-	if not step then
-		timerText.Text = ""
-		return
-	end
-
-	local stepState = state.Steps[step.Id]
-	if not stepState or not stepState.ExpiresAt then
-		timerText.Text = ""
-		return
-	end
-
-	local remaining = stepState.ExpiresAt - workspace:GetServerTimeNow()
-	timerText.Text = "Time left: " .. SmartQuestShared.FormatClock(remaining)
+	timerText.Text = nearest and ("Time left: " .. SmartQuestShared.FormatClock(nearest)) or ""
 end
 
 local function showToast(payload)
 	local text = payload.Text
 	if type(text) ~= "string" or text == "" then return end
-
 	if activeToastTween then activeToastTween:Cancel() end
-
 	toast.Text = text
 	toast.Visible = true
 	toast.BackgroundTransparency = 0.2
 	toast.TextTransparency = 0
 	toast.Position = UDim2.fromScale(0.5, 0.08)
-
-	TweenService:Create(toast, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Position = UDim2.fromScale(0.5, 0.095),
-	}):Play()
-
+	TweenService:Create(toast, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.fromScale(0.5, 0.095)}):Play()
 	task.delay(2.35, function()
 		if not toast.Visible then return end
-
-		activeToastTween = TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			BackgroundTransparency = 1,
-			TextTransparency = 1,
-		})
+		activeToastTween = TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {BackgroundTransparency = 1, TextTransparency = 1})
 		activeToastTween:Play()
 		activeToastTween.Completed:Wait()
 		toast.Visible = false
@@ -342,38 +313,49 @@ local function showToast(payload)
 end
 
 local function clearQuestCards()
-	for _, child in ipairs(questList:GetChildren()) do
-		if child:IsA("Frame") then
-			child:Destroy()
-		end
-	end
+	for _, child in ipairs(questList:GetChildren()) do if child:IsA("Frame") then child:Destroy() end end
+end
+
+local function addButton(parent, text, positionX, action, questId)
+	local button = Instance.new("TextButton")
+	button.Position = UDim2.fromOffset(positionX, 84)
+	button.Size = UDim2.fromOffset(92, 24)
+	button.BackgroundColor3 = Color3.fromRGB(42, 42, 42)
+	button.BorderSizePixel = 0
+	button.Font = Enum.Font.GothamBold
+	button.TextSize = 12
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.Text = text
+	button.Parent = parent
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = button
+	button.MouseButton1Click:Connect(function()
+		invokeAction(action, questId)
+	end)
 end
 
 local function makeQuestCard(entry, index)
 	local quest = entry.Quest
 	local state = entry.State
-	local status = state and state.Status or "NotStarted"
-
+	local status = state and state.Status or (entry.CanStart and "Available" or "Locked")
 	local card = Instance.new("Frame")
 	card.Name = quest.Id
 	card.LayoutOrder = index
-	card.Size = UDim2.new(1, -8, 0, 116)
-	card.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+	card.Size = UDim2.new(1, -8, 0, 122)
+	card.BackgroundColor3 = entry.Tracked and Color3.fromRGB(38, 34, 22) or Color3.fromRGB(28, 28, 28)
 	card.BackgroundTransparency = 0.08
 	card.BorderSizePixel = 0
 	card.Parent = questList
-
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0, 10)
 	corner.Parent = card
-
 	local pad = Instance.new("UIPadding")
 	pad.PaddingTop = UDim.new(0, 10)
 	pad.PaddingBottom = UDim.new(0, 10)
 	pad.PaddingLeft = UDim.new(0, 12)
 	pad.PaddingRight = UDim.new(0, 12)
 	pad.Parent = card
-
 	local name = Instance.new("TextLabel")
 	name.BackgroundTransparency = 1
 	name.Size = UDim2.new(1, 0, 0, 22)
@@ -383,98 +365,65 @@ local function makeQuestCard(entry, index)
 	name.TextColor3 = Color3.fromRGB(255, 255, 255)
 	name.Text = quest.Title .. "  [" .. status .. "]"
 	name.Parent = card
-
 	local desc = Instance.new("TextLabel")
 	desc.BackgroundTransparency = 1
 	desc.Position = UDim2.fromOffset(0, 26)
-	desc.Size = UDim2.new(1, 0, 0, 34)
+	desc.Size = UDim2.new(0.66, 0, 0, 50)
 	desc.Font = Enum.Font.Gotham
 	desc.TextSize = 13
 	desc.TextWrapped = true
 	desc.TextXAlignment = Enum.TextXAlignment.Left
 	desc.TextYAlignment = Enum.TextYAlignment.Top
 	desc.TextColor3 = Color3.fromRGB(205, 205, 205)
-	desc.Text = quest.Description or ""
+	desc.Text = state and getActiveStepSummary(quest, state) or (quest.Description or "")
 	desc.Parent = card
-
-	local objective = Instance.new("TextLabel")
-	objective.BackgroundTransparency = 1
-	objective.Position = UDim2.fromOffset(0, 66)
-	objective.Size = UDim2.new(1, 0, 0, 36)
-	objective.Font = Enum.Font.GothamMedium
-	objective.TextSize = 13
-	objective.TextWrapped = true
-	objective.TextXAlignment = Enum.TextXAlignment.Left
-	objective.TextYAlignment = Enum.TextYAlignment.Top
-	objective.TextColor3 = Color3.fromRGB(230, 220, 170)
-	objective.Text = ""
-	objective.Parent = card
-
-	if state and status == "Active" then
-		local step = getCurrentStep(quest, state)
-		if step then
-			local stepState = state.Steps[step.Id]
-			if stepState and stepState.Required > 1 then
-				objective.Text = `{step.Text} ({stepState.Progress}/{stepState.Required})`
-			else
-				objective.Text = step.Text
-			end
-		end
-	elseif status == "Completed" then
-		objective.Text = quest.Repeatable and "Completed. Repeatable when cooldown is available." or "Completed."
-	elseif entry.CanStart == true then
-		objective.Text = "Available to start."
-	else
-		objective.Text = "Locked or unavailable."
-	end
+	local reward = Instance.new("TextLabel")
+	reward.BackgroundTransparency = 1
+	reward.Position = UDim2.new(0.68, 0, 0, 26)
+	reward.Size = UDim2.new(0.32, 0, 0, 50)
+	reward.Font = Enum.Font.GothamMedium
+	reward.TextSize = 12
+	reward.TextWrapped = true
+	reward.TextXAlignment = Enum.TextXAlignment.Left
+	reward.TextYAlignment = Enum.TextYAlignment.Top
+	reward.TextColor3 = Color3.fromRGB(230, 220, 170)
+	reward.Text = entry.RewardPreview and table.concat(entry.RewardPreview, "\n") or ""
+	reward.Parent = card
+	if status == "Available" then addButton(card, "Start", 0, "Start", quest.Id) end
+	if status == "Active" then addButton(card, entry.Tracked and "Untrack" or "Track", 0, entry.Tracked and "Untrack" or "Track", quest.Id) addButton(card, "Abandon", 100, "Abandon", quest.Id) end
+	if status == "ReadyToTurnIn" then addButton(card, "Track", 0, "Track", quest.Id) addButton(card, "Turn In", 100, "TurnIn", quest.Id) end
 end
 
 local function renderJournal(snapshot)
 	clearQuestCards()
 	if not snapshot or type(snapshot.Quests) ~= "table" then return end
-
-	for index, entry in ipairs(snapshot.Quests) do
-		makeQuestCard(entry, index)
-	end
-
+	for index, entry in ipairs(snapshot.Quests) do makeQuestCard(entry, index) end
 	questList.CanvasSize = UDim2.fromOffset(0, listLayout.AbsoluteContentSize.Y + 12)
+end
+
+local function refreshJournal()
+	local ok, snapshot = pcall(function() return requestJournal:InvokeServer() end)
+	if ok then renderJournal(snapshot) end
 end
 
 local function toggleJournal()
 	journal.Visible = not journal.Visible
-	if journal.Visible then
-		local ok, snapshot = pcall(function()
-			return requestJournal:InvokeServer()
-		end)
-		if ok then
-			renderJournal(snapshot)
-		end
-	end
+	if journal.Visible then refreshJournal() end
 end
 
-closeJournal.MouseButton1Click:Connect(function()
-	journal.Visible = false
-end)
-
+closeJournal.MouseButton1Click:Connect(function() journal.Visible = false end)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
-	local configuredName = settings.JournalKeyCodeName or "J"
-	local keyCode = Enum.KeyCode[configuredName]
-	if keyCode and input.KeyCode == keyCode then
-		toggleJournal()
-	end
+	local keyCode = Enum.KeyCode[settings.JournalKeyCodeName or "J"]
+	if keyCode and input.KeyCode == keyCode then toggleJournal() end
 end)
 
 RunService.RenderStepped:Connect(updateTimerText)
 smartQuestUpdate.OnClientEvent:Connect(updateTracker)
 smartQuestToast.OnClientEvent:Connect(showToast)
-smartQuestJournal.OnClientEvent:Connect(renderJournal)
-
-task.defer(function()
-	local ok, snapshot = pcall(function()
-		return requestJournal:InvokeServer()
-	end)
-	if ok then
-		renderJournal(snapshot)
-	end
+smartQuestJournal.OnClientEvent:Connect(function(snapshot)
+	renderJournal(snapshot)
+	if journal.Visible then renderJournal(snapshot) end
 end)
+
+task.defer(refreshJournal)
