@@ -49,10 +49,6 @@ SmartQuest v3 includes:
 - Debug helper methods
 - Startup validator module
 
-Skipped intentionally per project direction:
-
-- Rojo project setup
-- Dialogue service integration
 
 ## Roblox Studio Layout
 
