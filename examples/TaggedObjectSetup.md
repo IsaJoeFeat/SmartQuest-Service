@@ -1,47 +1,64 @@
 # Tagged Object Setup
 
-SmartQuest supports two optional automation tags:
+SmartQuest v2 supports three automation tags:
 
+- `SmartQuestGiver`
 - `SmartQuestInteract`
 - `SmartQuestZone`
 
-These are meant to save setup time inside Roblox Studio.
+These tags let you build quest content quickly in Roblox Studio by placing an object, tagging it, and setting attributes.
+
+## SmartQuestGiver
+
+Use this for NPCs, boards, consoles, or objects that start a quest.
+
+Attributes:
+
+```txt
+QuestId: string = RepairPower
+PromptText: string = Start Quest
+ObjectText: string = Quest
+HoldDuration: number = 0
+MaxActivationDistance: number = 10
+```
+
+When triggered, SmartQuest calls:
+
+```lua
+SmartQuestService:StartQuest(player, "RepairPower")
+```
+
+Prerequisites, repeat cooldowns, and completion checks are handled automatically.
 
 ## SmartQuestInteract
 
-Use this for objects the player activates with a ProximityPrompt.
+Use this for objects that progress an active quest step.
 
-### Setup
-
-1. Insert a `Part` or `Model`.
-2. Tag it with `SmartQuestInteract` using Roblox Studio's Tag Editor.
-3. Add these attributes:
+Attributes:
 
 ```txt
 QuestId: string = RepairPower
 StepId: string = FindFuse
 PromptText: string = Pick up Fuse
+ObjectText: string = Fuse Box
 HoldDuration: number = 0.25
 MaxActivationDistance: number = 10
 Amount: number = 1
 ```
 
-When the player triggers the prompt, the server calls:
+When triggered, SmartQuest calls:
 
 ```lua
 SmartQuestService:Progress(player, "RepairPower", "FindFuse", 1)
 ```
 
+Only the currently active step can progress.
+
 ## SmartQuestZone
 
-Use this for invisible objective zones, room triggers, tutorial areas, map checkpoints, or quest locations.
+Use this for objective area triggers, room checks, tutorial checkpoints, or map locations.
 
-### Setup
-
-1. Insert a `Part`.
-2. Make it transparent and non-collidable if desired.
-3. Tag it with `SmartQuestZone`.
-4. Add these attributes:
+Attributes:
 
 ```txt
 QuestId: string = RepairPower
@@ -49,28 +66,45 @@ StepId: string = ReturnToMainRoom
 Amount: number = 1
 ```
 
-When a player touches the part, the server progresses the step.
+When a player touches the zone part, the server progresses that step.
+
+## Objective Markers
+
+Markers are configured on quest steps.
+
+```lua
+{
+    Id = "RepairGenerator",
+    Text = "Repair the generator",
+    Type = "Interact",
+    TargetTag = "Generator",
+    Marker = true,
+    MarkerText = "Generator",
+    Required = 1,
+}
+```
+
+SmartQuest finds the first object with the target tag/name and sends it to the client marker UI.
+
+## Startup Warnings
+
+SmartQuest v2 warns about common setup problems:
+
+- Tagged object missing `QuestId`
+- Interact/zone object missing `StepId`
+- Marker step with no target field
+- Duplicate quest step IDs
 
 ## Common Problems
 
 ### The prompt does not show
 
-Check that:
-
-- The object has the `SmartQuestInteract` tag.
-- `QuestId` is a string attribute.
-- `StepId` is a string attribute.
-- The tagged object is a `BasePart` or a `Model` containing a `BasePart`.
+Check the tag, attributes, and whether the tagged object is a `BasePart` or a `Model` with a `BasePart`.
 
 ### The objective does not progress
 
-Check that:
+Check the quest ID, step ID, active step, conditions, and whether the quest is already completed.
 
-- The quest exists in `SmartQuestConfig.lua`.
-- The step ID matches exactly.
-- The step is currently active.
-- The player has not already completed the quest.
+### The marker does not show
 
-### The zone keeps firing repeatedly
-
-SmartQuest has a short per-player debounce for zones. If you need stricter one-time behavior, handle that in the quest design or add a future one-shot attribute.
+Check that the step has `Marker = true` and a valid `TargetTag`, `TargetName`, or `Target`.
